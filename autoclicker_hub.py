@@ -49,8 +49,8 @@ MIN_MILLIS = 1.0
 DATA_FILE = "clicker_data.json"
 MAX_DATA_AGE_WEEKS = 5
 CONFIG_FILE = "config.json"
-# GitHub URL for leaderboard data (raw file URL)
-LEADERBOARD_GITHUB_URL = "https://raw.githubusercontent.com/kobel-studios/kobel-autoclicker-competetive/main/clicker_data.json"
+# GitHub URL for leaderboard data (using API to bypass caching)
+LEADERBOARD_GITHUB_URL = "https://api.github.com/repos/kobel-studios/kobel-autoclicker-competetive/contents/clicker_data.json"
 # TEST MODE: Use local file for testing
 # LEADERBOARD_GITHUB_URL = "file:///C:/Users/jacks/CascadeProjects/autoclicker-hub/clicker_data_test.json"
 # GitHub Issues URL for submitting leaderboard data
@@ -338,7 +338,16 @@ class AutoClickerHub:
         try:
             # Fetch current data from GitHub
             response = urllib.request.urlopen(LEADERBOARD_GITHUB_URL)
-            data = json.loads(response.read().decode('utf-8'))
+            api_response = json.loads(response.read().decode('utf-8'))
+            
+            # GitHub API returns base64-encoded content
+            if "content" in api_response:
+                import base64
+                content = base64.b64decode(api_response["content"]).decode('utf-8')
+                data = json.loads(content)
+            else:
+                data = {"sessions": []}
+            
             sessions = data.get("sessions", [])
             
             # Check if any session has this username
@@ -978,7 +987,16 @@ class AutoClickerHub:
         try:
             # Fetch data from GitHub
             response = urllib.request.urlopen(LEADERBOARD_GITHUB_URL)
-            remote_data = json.loads(response.read().decode('utf-8'))
+            api_response = json.loads(response.read().decode('utf-8'))
+            
+            # GitHub API returns base64-encoded content
+            if "content" in api_response:
+                import base64
+                content = base64.b64decode(api_response["content"]).decode('utf-8')
+                remote_data = json.loads(content)
+            else:
+                remote_data = {"sessions": []}
+            
             remote_sessions = remote_data.get("sessions", [])
 
             # Load local data
@@ -1117,7 +1135,16 @@ class AutoClickerHub:
                 headers={"Authorization": f"token {self.github_token}"}
             )
             response = urllib.request.urlopen(request)
-            remote_data = json.loads(response.read().decode('utf-8'))
+            api_response = json.loads(response.read().decode('utf-8'))
+            
+            # GitHub API returns base64-encoded content
+            if "content" in api_response:
+                import base64
+                content = base64.b64decode(api_response["content"]).decode('utf-8')
+                remote_data = json.loads(content)
+            else:
+                remote_data = {"sessions": []}
+            
             remote_sessions = remote_data.get("sessions", [])
 
             # Check if session already exists (by timestamp)
