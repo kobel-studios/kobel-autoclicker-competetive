@@ -933,8 +933,23 @@ class AutoClickerHub:
             tree_frame = ttk.Frame(leaderboard_window)
             tree_frame.pack(fill="both", expand=True, padx=10, pady=5)
 
+            # Configure Treeview style for dark theme
+            style = ttk.Style()
+            style.configure("Treeview", 
+                          background=BG, 
+                          foreground=FG, 
+                          fieldbackground=BG,
+                          font=("Segoe UI", 10))
+            style.configure("Treeview.Heading", 
+                          background=SURFACE, 
+                          foreground=FG, 
+                          font=("Segoe UI", 10, "bold"))
+            style.map("Treeview", 
+                     background=[('selected', ACCENT)],
+                     foreground=[('selected', 'white')])
+
             columns = ("rank", "username", "date", "max_rate", "avg_rate", "total_clicks")
-            tree = ttk.Treeview(tree_frame, columns=columns, show="headings")
+            tree = ttk.Treeview(tree_frame, columns=columns, show="headings", style="Treeview")
             tree.heading("rank", text="#")
             tree.heading("username", text="Username")
             tree.heading("date", text="Date")
@@ -942,12 +957,12 @@ class AutoClickerHub:
             tree.heading("avg_rate", text="Avg Rate")
             tree.heading("total_clicks", text="Total Clicks")
 
-            tree.column("rank", width=40, anchor="center")
-            tree.column("username", width=100)
-            tree.column("date", width=120)
-            tree.column("max_rate", width=80, anchor="center")
-            tree.column("avg_rate", width=80, anchor="center")
-            tree.column("total_clicks", width=100, anchor="center")
+            tree.column("rank", width=30, anchor="center")
+            tree.column("username", width=80)
+            tree.column("date", width=90)
+            tree.column("max_rate", width=60, anchor="center")
+            tree.column("avg_rate", width=60, anchor="center")
+            tree.column("total_clicks", width=70, anchor="center")
 
             tree.pack(side="left", fill="both", expand=True)
 
