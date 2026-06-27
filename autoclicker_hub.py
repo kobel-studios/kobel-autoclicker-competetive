@@ -8,6 +8,9 @@ from collections import deque
 from datetime import datetime, timedelta
 import urllib.request
 import urllib.error
+import urllib.parse
+import webbrowser
+import base64
 
 import keyboard
 import pyautogui
@@ -48,6 +51,10 @@ MAX_DATA_AGE_WEEKS = 5
 CONFIG_FILE = "config.json"
 # GitHub URL for leaderboard data (raw file URL)
 LEADERBOARD_GITHUB_URL = "https://raw.githubusercontent.com/kobel-studios/kobel-autoclicker-competetive/main/clicker_data.json"
+# TEST MODE: Use local file for testing
+# LEADERBOARD_GITHUB_URL = "file:///C:/Users/jacks/CascadeProjects/autoclicker-hub/clicker_data_test.json"
+# GitHub Issues URL for submitting leaderboard data
+GITHUB_ISSUES_URL = "https://github.com/kobel-studios/kobel-autoclicker-competetive/issues/new"
 
 
 class AutoClickerHub:
@@ -74,12 +81,12 @@ class AutoClickerHub:
         self._build_ui()
         self._load_data()
         self._cleanup_old_data()
+        self._check_for_leaderboard_updates()  # Check for updates on launch
 
         keyboard.add_hotkey(HOTKEY, self._hotkey_pressed)
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
-        # Esc only quits when THIS window is focused (not globally), so clicking
-        # off the app and pressing Esc elsewhere won't close it.
-        self.root.bind("<Escape>", lambda _e: self.on_close())
+        # Bind click handler to entire window to remove focus from text boxes
+        self.root.bind("<Button-1>", self._on_background_click)
 
     # ---------- Theme ----------
     def _apply_dark_theme(self):
@@ -136,6 +143,7 @@ class AutoClickerHub:
         """Load user configuration or prompt for username on first launch."""
         self.username = None
         self.participate_leaderboard = False
+        self.github_token = None
 
         if os.path.exists(CONFIG_FILE):
             try:
@@ -143,12 +151,136 @@ class AutoClickerHub:
                     config = json.load(f)
                     self.username = config.get("username")
                     self.participate_leaderboard = config.get("participate_leaderboard", False)
+                    self.github_token = config.get("github_token")
             except Exception:
                 pass
 
         # If no username or not participating, prompt user
         if not self.username or not self.participate_leaderboard:
             self._prompt_username()
+
+    def _ask_github_token(self):
+        """Ask user for GitHub token with clickable link."""
+        import webbrowser
+        
+        dialog = tk.Toplevel(self.root)
+        dialog.title("GitHub Token")
+        dialog.geometry("500x400")
+        dialog.configure(bg=BG)
+        dialog.transient(self.root)
+        dialog.grab_set()
+        
+        # Instructions
+        instructions = tk.Label(
+            dialog,
+            text="WHAT THIS DOES:\n"
+                   "This lets the app add your score to the leaderboard automatically.\n"
+                   "It does NOT give us access to your GitHub account or repos.\n"
+                   "You create the token yourself, so you control it.\n\n"
+                   "STEP 1: Click the link below\n"
+                   "STEP 2: Click 'Generate new token' (or 'Generate new token (classic)')\n"
+                   "STEP 3: Type a name (like 'autoclicker')\n"
+                   "STEP 4: Check the box that says 'repo'\n"
+                   "STEP 5: Click the green button\n"
+                   "STEP 6: Copy the code it shows you\n"
+                   "STEP 7: Paste it in the box below",
+            fg=FG,
+            bg=BG,
+            font=("Segoe UI", 10),
+            justify="left"
+        )
+        instructions.pack(pady=20, padx=20)
+        
+        # Clickable link
+        def open_link():
+            webbrowser.open("https://github.com/settings/tokens")
+        
+        link_label = tk.Label(
+            dialog,
+            text="https://github.com/settings/tokens",
+            fg=ACCENT,
+            bg=BG,
+            font=("Segoe UI", 10, "underline"),
+            cursor="hand2"
+        )
+        link_label.pack(pady=5)
+        link_label.bind("<Button-1>", lambda e: open_link())
+        
+        # Safety note
+        safety_note = tk.Label(
+            dialog,
+            text="This is NOT your GitHub password. It's a special code you create.\n"
+                   "You can delete it anytime from GitHub settings.\n\n"
+                   "(Leave empty to use manual submission instead)",
+            fg=MUTED,
+            bg=BG,
+            font=("Segoe UI", 9),
+            justify="left"
+        )
+        safety_note.pack(pady=10, padx=20)
+        
+        # Token input
+        token_var = tk.StringVar()
+        token_entry = tk.Entry(
+            dialog,
+            textvariable=token_var,
+            show="*",
+            font=("Segoe UI", 10),
+            bg=SURFACE,
+            fg=FG,
+            insertbackground=FG
+        )
+        token_entry.pack(pady=10, padx=20, fill="x")
+        token_entry.focus()
+        
+        # Buttons
+        button_frame = tk.Frame(dialog, bg=BG)
+        button_frame.pack(pady=20)
+        
+        result = [None]
+        
+        def on_ok():
+            result[0] = token_var.get()
+            dialog.destroy()
+        
+        def on_cancel():
+            result[0] = ""
+            dialog.destroy()
+        
+        ok_button = tk.Button(
+            button_frame,
+            text="OK",
+            command=on_ok,
+            bg=ACCENT,
+            fg="white",
+            font=("Segoe UI", 10),
+            relief="flat",
+            padx=20
+        )
+        ok_button.pack(side="left", padx=5)
+        
+        cancel_button = tk.Button(
+            button_frame,
+            text="Cancel",
+            command=on_cancel,
+            bg=SURFACE,
+            fg=FG,
+            font=("Segoe UI", 10),
+            relief="flat",
+            padx=20
+        )
+        cancel_button.pack(side="left", padx=5)
+        
+        # Center dialog
+        dialog.update_idletasks()
+        x = (dialog.winfo_screenwidth() // 2) - (dialog.winfo_width() // 2)
+        y = (dialog.winfo_screenheight() // 2) - (dialog.winfo_height() // 2)
+        dialog.geometry(f"+{x}+{y}")
+        
+        # Wait for dialog to close
+        self.root.wait_window(dialog)
+        
+        return result[0]
 
     def _prompt_username(self):
         """Prompt user for leaderboard participation and username."""
@@ -160,31 +292,84 @@ class AutoClickerHub:
         )
 
         if result:
-            # Ask for username
-            username = simpledialog.askstring(
-                "Username",
-                "Enter your username for the leaderboard:",
-                parent=self.root
-            )
-            if username and username.strip():
-                self.username = username.strip()
+            # Ask for username (loop until unique or cancelled)
+            while True:
+                username = simpledialog.askstring(
+                    "Username",
+                    "Enter your username for the leaderboard:",
+                    parent=self.root
+                )
+                
+                if not username or not username.strip():
+                    # User cancelled or entered empty username
+                    self.participate_leaderboard = False
+                    self._save_config()
+                    return
+                
+                username = username.strip()
+                
+                # Check if username already exists in leaderboard
+                if self._username_exists(username):
+                    messagebox.showerror(
+                        "Username Taken",
+                        f"The username '{username}' is already taken. Please choose a different username."
+                    )
+                    continue
+                
+                # Username is unique
+                self.username = username
                 self.participate_leaderboard = True
+                # Ask for GitHub token for automatic submission
+                token = self._ask_github_token()
+                self.github_token = token.strip() if token else None
                 self._save_config()
-                messagebox.showinfo("Welcome", f"Welcome, {self.username}! Your sessions will be saved to the leaderboard.")
-            else:
-                # User cancelled or entered empty username
-                self.participate_leaderboard = False
-                self._save_config()
+                if self.github_token:
+                    messagebox.showinfo("Welcome", f"Welcome, {self.username}! Your sessions will be automatically submitted to the leaderboard.")
+                else:
+                    messagebox.showinfo("Welcome", f"Welcome, {self.username}! Your sessions will be saved to the leaderboard (manual submission via GitHub Issues).")
+                break
         else:
             # User declined participation
             self.participate_leaderboard = False
             self._save_config()
 
+    def _username_exists(self, username):
+        """Check if username already exists in the leaderboard."""
+        try:
+            # Fetch current data from GitHub
+            response = urllib.request.urlopen(LEADERBOARD_GITHUB_URL)
+            data = json.loads(response.read().decode('utf-8'))
+            sessions = data.get("sessions", [])
+            
+            # Check if any session has this username
+            for session in sessions:
+                if session.get("username") == username:
+                    return True
+            
+            return False
+        except urllib.error.URLError:
+            # Can't connect to GitHub - warn user but allow
+            messagebox.showwarning(
+                "Connection Error",
+                "Cannot check if username is taken (no internet connection).\n"
+                "You can continue, but your username might already be taken."
+            )
+            return False
+        except Exception as e:
+            # Other error - warn user but allow
+            messagebox.showwarning(
+                "Error",
+                f"Cannot check if username is taken: {e}\n"
+                "You can continue, but your username might already be taken."
+            )
+            return False
+
     def _save_config(self):
         """Save user configuration to file."""
         config = {
             "username": self.username,
-            "participate_leaderboard": self.participate_leaderboard
+            "participate_leaderboard": self.participate_leaderboard,
+            "github_token": self.github_token
         }
         with open(CONFIG_FILE, "w", encoding="utf-8") as f:
             json.dump(config, f, indent=2)
@@ -194,8 +379,6 @@ class AutoClickerHub:
         pad = {"padx": 8, "pady": 6}
         container = ttk.Frame(self.root, padding=16)
         container.grid(row=0, column=0, sticky="nsew")
-        # Bind click handler to container for background clicks
-        container.bind("<Button-1>", self._on_window_click)
 
         title = ttk.Label(container, text="kobel-autoclicker", font=("Segoe UI", 16, "bold"))
         title.grid(row=0, column=0, columnspan=4, pady=(0, 12))
@@ -318,25 +501,30 @@ class AutoClickerHub:
             self.hours_entry_frame.grid_forget()
             self.hours_tab.config(text="Hours")
 
-    def _on_window_click(self, event):
-        """Validate interval fields when clicking on window background."""
-        # Check if click was on an interval entry
-        if hasattr(self, 'interval_entries'):
-            clicked_widget = event.widget
-            # Walk up the widget hierarchy to see if it's an interval entry
-            current = clicked_widget
-            while current:
-                if current in self.interval_entries:
-                    return  # Clicked on an interval entry, don't validate
-                try:
-                    current = current.master
-                except AttributeError:
-                    break
-            # If we get here, click was not on an interval entry - validate all
-            self._validate_interval(self.minutes_var)
-            self._validate_interval(self.seconds_var)
-            self._validate_interval(self.hours_var)
-            self._validate_millis(self.millis_var)
+    def _on_background_click(self, event):
+        """Remove focus from text boxes when clicking on window background."""
+        # Check if click was on an interactive widget (text box, button, etc.)
+        clicked_widget = event.widget
+        
+        # Don't remove focus if clicking on an entry (text box)
+        if isinstance(clicked_widget, ttk.Entry):
+            return
+        
+        # Walk up the widget hierarchy to check if it's inside an interactive element
+        current = clicked_widget
+        while current:
+            if isinstance(current, ttk.Entry):
+                return  # Clicked on or inside a text box, don't remove focus
+            if isinstance(current, (ttk.Button, ttk.Combobox, ttk.Checkbutton, ttk.Radiobutton)):
+                return  # Clicked on interactive widget, don't remove focus
+            try:
+                current = current.master
+            except AttributeError:
+                break
+        
+        # If we get here, click was on background - remove focus
+        self.root.focus_set()
+
 
     def _validate_interval(self, var):
         """Validate interval field (seconds, minutes, hours) and reset to 0 if invalid."""
@@ -479,9 +667,9 @@ class AutoClickerHub:
         self.clicking = False
         self.toggle_button.config(text="Start (F6)")
         self._set_status("Stopped", STOPPED_COLOR)
-        # Save the session data when stopping
-        if self.click_rate_history:
-            self._save_session()
+        # Ask if user wants to save to leaderboard before saving
+        if self.participate_leaderboard and self.total_clicks > 0:
+            self._prompt_submit_leaderboard()
 
     def _click_loop(self, interval, button):
         count = self.total_clicks
@@ -547,6 +735,7 @@ class AutoClickerHub:
         graph_window.title("Click Rate Graph")
         graph_window.geometry("600x450")
         graph_window.configure(bg=BG)
+        graph_window.attributes("-topmost", True)  # Keep window on top
 
         # Graph type selector
         control_frame = ttk.Frame(graph_window)
@@ -554,8 +743,8 @@ class AutoClickerHub:
 
         ttk.Label(control_frame, text="Graph type:").pack(side="left", padx=(0, 8))
         graph_type_var = tk.StringVar(value="line")
-        ttk.Radiobutton(control_frame, text="Line chart", variable=graph_type_var, value="line").pack(side="left", padx=8)
-        ttk.Radiobutton(control_frame, text="Bar chart", variable=graph_type_var, value="bar").pack(side="left", padx=8)
+        ttk.Radiobutton(control_frame, text="Line chart", variable=graph_type_var, value="line", command=lambda: self._update_graph(graph_window, graph_type_var)).pack(side="left", padx=8)
+        ttk.Radiobutton(control_frame, text="Bar chart", variable=graph_type_var, value="bar", command=lambda: self._update_graph(graph_window, graph_type_var)).pack(side="left", padx=8)
 
         # Refresh button
         ttk.Button(control_frame, text="Refresh", command=lambda: self._update_graph(graph_window, graph_type_var)).pack(side="right", padx=8)
@@ -695,6 +884,9 @@ class AutoClickerHub:
 
     def _show_leaderboard(self):
         """Show a leaderboard of saved sessions."""
+        # Check for updates before showing leaderboard
+        self._check_for_leaderboard_updates()
+        
         if not os.path.exists(DATA_FILE):
             messagebox.showinfo("No data", "No saved sessions found.")
             return
@@ -717,6 +909,7 @@ class AutoClickerHub:
             leaderboard_window.title("Leaderboard")
             leaderboard_window.geometry("500x400")
             leaderboard_window.configure(bg=BG)
+            leaderboard_window.attributes("-topmost", True)  # Keep window on top
 
             # Header
             ttk.Label(
@@ -780,6 +973,42 @@ class AutoClickerHub:
         except Exception as e:
             messagebox.showerror("Error", f"Failed to load leaderboard: {e}")
 
+    def _check_for_leaderboard_updates(self):
+        """Check for leaderboard updates and prompt user if available."""
+        try:
+            # Fetch data from GitHub
+            response = urllib.request.urlopen(LEADERBOARD_GITHUB_URL)
+            remote_data = json.loads(response.read().decode('utf-8'))
+            remote_sessions = remote_data.get("sessions", [])
+
+            # Load local data
+            if os.path.exists(DATA_FILE):
+                with open(DATA_FILE, "r", encoding="utf-8") as f:
+                    local_data = json.load(f)
+            else:
+                local_data = {"sessions": []}
+            local_sessions = local_data.get("sessions", [])
+
+            # Count new sessions
+            local_timestamps = {s["timestamp"] for s in local_sessions}
+            new_sessions = [s for s in remote_sessions if s["timestamp"] not in local_timestamps]
+
+            if new_sessions:
+                # Prompt user to update
+                result = messagebox.askyesno(
+                    "Leaderboard Update Available",
+                    f"Found {len(new_sessions)} new session(s) on the global leaderboard.\n\n"
+                    f"Do you want to download and merge them now?"
+                )
+                if result:
+                    self._update_leaderboard_from_github()
+        except urllib.error.URLError:
+            # Network error - silently skip on launch
+            pass
+        except Exception:
+            # Other errors - silently skip on launch
+            pass
+
     def _update_leaderboard_from_github(self):
         """Download and merge leaderboard data from GitHub."""
         try:
@@ -834,65 +1063,320 @@ class AutoClickerHub:
         except Exception as e:
             messagebox.showerror("Error", f"An unexpected error occurred: {e}")
 
+    def _prompt_submit_leaderboard(self):
+        """Prompt user to submit their session data to GitHub."""
+        if self.github_token:
+            # Automatic submission via GitHub API
+            result = messagebox.askyesno(
+                "Submit to Leaderboard",
+                "Do you want to submit your click session to the global leaderboard?\n\n"
+                "The leaderboard is updated monthly. Click 'Update' in the app to download the latest leaderboard data.\n\n"
+                "This will automatically submit your data via GitHub API."
+            )
+            if result:
+                # Save the session locally first
+                self._save_session()
+                # Then submit via GitHub API
+                self._submit_to_github_api()
+        else:
+            # Manual submission via GitHub Issues
+            result = messagebox.askyesno(
+                "Submit to Leaderboard",
+                "Do you want to submit your click session to the global leaderboard?\n\n"
+                "The leaderboard is updated monthly. Click 'Update' in the app to download the latest leaderboard data.\n\n"
+                "This will open a GitHub Issue where you can create your data."
+            )
+            if result:
+                # Save the session locally first
+                self._save_session()
+                # Then open GitHub Issues
+                self._submit_to_github()
+
+    def _submit_to_github_api(self):
+        """Submit session data to GitHub via API."""
+        try:
+            # Load the latest session data
+            if not os.path.exists(DATA_FILE):
+                messagebox.showerror("Error", "No session data found to submit.")
+                return
+
+            with open(DATA_FILE, "r", encoding="utf-8") as f:
+                local_data = json.load(f)
+            local_sessions = local_data.get("sessions", [])
+            
+            if not local_sessions:
+                messagebox.showerror("Error", "No session data found to submit.")
+                return
+
+            # Get the most recent session
+            latest_session = local_sessions[-1]
+
+            # Fetch current data from GitHub
+            request = urllib.request.Request(
+                LEADERBOARD_GITHUB_URL,
+                headers={"Authorization": f"token {self.github_token}"}
+            )
+            response = urllib.request.urlopen(request)
+            remote_data = json.loads(response.read().decode('utf-8'))
+            remote_sessions = remote_data.get("sessions", [])
+
+            # Check if session already exists (by timestamp)
+            if any(s.get("timestamp") == latest_session.get("timestamp") for s in remote_sessions):
+                messagebox.showinfo("Info", "This session is already on the leaderboard.")
+                return
+
+            # Add new session
+            remote_sessions.append(latest_session)
+            remote_data["sessions"] = remote_sessions
+
+            # Get the SHA of the current file (needed for updating)
+            # For this, we need to use the GitHub API to get file info
+            api_url = "https://api.github.com/repos/kobel-studios/kobel-autoclicker-competetive/contents/clicker_data.json"
+            request = urllib.request.Request(
+                api_url,
+                headers={"Authorization": f"token {self.github_token}"}
+            )
+            response = urllib.request.urlopen(request)
+            file_info = json.loads(response.read().decode('utf-8'))
+            sha = file_info.get("sha")
+
+            # Update the file via GitHub API
+            updated_content = json.dumps(remote_data, indent=2)
+            import base64
+            encoded_content = base64.b64encode(updated_content.encode('utf-8')).decode('utf-8')
+
+            put_data = {
+                "message": f"Add session from {self.username}",
+                "content": encoded_content,
+                "sha": sha
+            }
+
+            request = urllib.request.Request(
+                api_url,
+                data=json.dumps(put_data).encode('utf-8'),
+                headers={
+                    "Authorization": f"token {self.github_token}",
+                    "Content-Type": "application/json"
+                },
+                method="PUT"
+            )
+            response = urllib.request.urlopen(request)
+
+            messagebox.showinfo("Success", "Your session has been successfully submitted to the leaderboard!")
+
+        except urllib.error.HTTPError as e:
+            if e.code == 401:
+                messagebox.showerror("Error", "Invalid GitHub token. Please check your token and try again.")
+            elif e.code == 403:
+                messagebox.showerror("Error", "GitHub token doesn't have permission to modify the repository. Please ensure your token has 'repo' scope.")
+            elif e.code == 404:
+                messagebox.showerror("Error", "Repository or file not found. Please check the GitHub URL.")
+            else:
+                messagebox.showerror("Error", f"GitHub API error: {e.code} - {e.reason}")
+        except urllib.error.URLError as e:
+            messagebox.showerror("Error", f"Failed to connect to GitHub: {e}\n\nCheck your internet connection.")
+        except Exception as e:
+            messagebox.showerror("Error", f"An unexpected error occurred: {e}")
+
+    def _submit_to_github(self):
+        """Open GitHub Issues with pre-filled leaderboard data."""
+        try:
+            # Load the latest session data
+            if not os.path.exists(DATA_FILE):
+                messagebox.showerror("Error", "No session data found to submit.")
+                return
+
+            with open(DATA_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            sessions = data.get("sessions", [])
+
+            if not sessions:
+                messagebox.showerror("Error", "No session data found to submit.")
+                return
+
+            # Get the most recent session
+            latest_session = sessions[-1]
+
+            # Format the issue body
+            issue_title = f"Leaderboard submission from {self.username or 'Anonymous'}"
+            issue_body = f"""**Username:** {self.username or 'Anonymous'}
+
+**Session Stats:**
+- Total Clicks: {latest_session.get('total_clicks', 0)}
+- Duration: {latest_session.get('duration_seconds', 0)} seconds
+- Max Clicks/Sec: {latest_session.get('max_clicks_per_sec', 0)}
+- Avg Clicks/Sec: {latest_session.get('avg_clicks_per_sec', 0)}
+
+**Raw Data:**
+```json
+{json.dumps(latest_session, indent=2)}
+```
+
+Please merge this into the global leaderboard.
+"""
+
+            # Encode the body for URL
+            encoded_body = urllib.parse.quote(issue_body)
+            encoded_title = urllib.parse.quote(issue_title)
+
+            # Build the URL
+            url = f"{GITHUB_ISSUES_URL}?title={encoded_title}&body={encoded_body}"
+
+            # Open in browser
+            webbrowser.open(url)
+
+            messagebox.showinfo("Opening GitHub", "A browser window will open with your submission ready.\n\nClick 'Submit new issue' to complete the submission.")
+
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to prepare submission: {e}")
+
     def _show_click_tester(self):
         """Show a click tester popup for manual clicking speed testing."""
         tester_window = tk.Toplevel(self.root)
         tester_window.title("Click Tester")
-        tester_window.geometry("400x300")
+        tester_window.geometry("600x500")
         tester_window.configure(bg=BG)
         tester_window.attributes("-topmost", True)
+        tester_window.resizable(True, True)  # Make window resizable
+
+        # Store original dimensions for scaling
+        tester_window.original_width = 600
+        tester_window.original_height = 500
 
         # Header
+        header_frame = ttk.Frame(tester_window)
+        header_frame.pack(fill="x", padx=10, pady=10)
         ttk.Label(
-            tester_window,
-            text="Manual Click Speed Tester",
-            font=("Segoe UI", 14, "bold"),
+            header_frame,
+            text="Click anywhere to test speed",
+            font=("Segoe UI", 12, "bold"),
             foreground=FG,
             background=BG,
-        ).pack(pady=15)
-
-        # Click area button
-        click_area = ttk.Button(
-            tester_window,
-            text="CLICK HERE",
-            font=("Segoe UI", 16, "bold"),
-            command=lambda: self._register_test_click(tester_window),
-        )
-        click_area.pack(pady=20, ipadx=20, ipady=10)
-
-        # Stats display
-        stats_frame = ttk.Frame(tester_window)
-        stats_frame.pack(fill="x", padx=20, pady=10)
-
-        self.test_clicks_var = tk.StringVar(value="Clicks: 0")
-        ttk.Label(stats_frame, textvariable=self.test_clicks_var, font=("Segoe UI", 12), foreground=FG, background=BG).pack()
-
-        self.test_cps_var = tk.StringVar(value="Speed: 0 clicks/sec")
-        ttk.Label(stats_frame, textvariable=self.test_cps_var, font=("Segoe UI", 12), foreground=ACCENT, background=BG).pack()
-
-        # Visual speed bar
-        ttk.Label(tester_window, text="Speed Meter", foreground=MUTED, background=BG).pack(pady=(10, 5))
-        self.test_speed_bar = ttk.Progressbar(tester_window, orient="horizontal", length=300, mode="determinate")
-        self.test_speed_bar.pack(pady=5)
+        ).pack(side="left")
 
         # Reset button
         ttk.Button(
-            tester_window,
+            header_frame,
             text="Reset",
             command=lambda: self._reset_click_tester(tester_window),
-        ).pack(pady=10)
+        ).pack(side="right")
+
+        # Canvas for click visualization
+        canvas = tk.Canvas(tester_window, bg=BG, highlightthickness=0)
+        canvas.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+        tester_window.test_canvas = canvas
+
+        # Stats overlay
+        stats_frame = tk.Frame(canvas, bg=BG)
+        stats_frame.place(relx=0.5, rely=0.05, anchor="n")
+        tester_window.stats_frame = stats_frame
+
+        self.test_clicks_var = tk.StringVar(value="Clicks: 0")
+        tester_window.clicks_label = tk.Label(stats_frame, textvariable=self.test_clicks_var, font=("Segoe UI", 14, "bold"), fg=FG, bg=BG)
+        tester_window.clicks_label.pack()
+
+        self.test_cps_var = tk.StringVar(value="Speed: 0 clicks/sec")
+        tester_window.cps_label = tk.Label(stats_frame, textvariable=self.test_cps_var, font=("Segoe UI", 12), fg=ACCENT, bg=BG)
+        tester_window.cps_label.pack()
 
         # Initialize test data
         tester_window.test_clicks = 0
         tester_window.test_start_time = None
         tester_window.test_click_times = []
+        tester_window.ripples = []  # Store (circle_id, x, y, creation_time) for ripple effect
+        tester_window.center_circle = None  # Static center circle
+        tester_window.max_ripples = 50  # Limit active ripples for performance (increased for better visibility)
 
-    def _register_test_click(self, window):
+        # Bind click event
+        canvas.bind("<Button-1>", lambda e: self._register_test_click(tester_window, e))
+
+        # Bind resize event to scale UI
+        tester_window.bind("<Configure>", lambda e: self._on_tester_resize(tester_window))
+
+        # Create static center circle
+        self._create_center_circle(tester_window)
+
+        # Start ripple animation loop
+        self._animate_click_tester(tester_window)
+
+    def _on_tester_resize(self, window):
+        """Handle window resize and scale UI elements proportionally."""
+        current_width = window.winfo_width()
+        current_height = window.winfo_height()
+        
+        # Recreate center circle at new center position
+        if window.center_circle:
+            window.test_canvas.delete(window.center_circle)
+        self._create_center_circle(window)
+        
+        # Calculate scale factors
+        width_scale = current_width / window.original_width
+        height_scale = current_height / window.original_height
+        
+        # Scale font sizes
+        base_clicks_font = 14
+        base_cps_font = 12
+        
+        new_clicks_font = max(8, int(base_clicks_font * min(width_scale, height_scale)))
+        new_cps_font = max(6, int(base_cps_font * min(width_scale, height_scale)))
+        
+        window.clicks_label.config(font=("Segoe UI", new_clicks_font, "bold"))
+        window.cps_label.config(font=("Segoe UI", new_cps_font))
+
+    def _create_center_circle(self, window):
+        """Create a static center circle for the click tester."""
+        canvas_width = window.test_canvas.winfo_width()
+        canvas_height = window.test_canvas.winfo_height()
+        center_x = canvas_width / 2
+        center_y = canvas_height / 2
+        radius = 50
+        
+        # Create center circle with lighter background color
+        bg_color = BG
+        bg_r = int(bg_color[1:3], 16)
+        bg_g = int(bg_color[3:5], 16)
+        bg_b = int(bg_color[5:7], 16)
+        
+        # Lighter color (add 30 to each component)
+        light_r = min(255, bg_r + 30)
+        light_g = min(255, bg_g + 30)
+        light_b = min(255, bg_b + 30)
+        fill_color = f"#{light_r:02x}{light_g:02x}{light_b:02x}"
+        
+        window.center_circle = window.test_canvas.create_oval(
+            center_x - radius, center_y - radius,
+            center_x + radius, center_y + radius,
+            fill=fill_color, outline="#000000", width=2
+        )
+        
+        # Store center coordinates for ripple spawning
+        window.center_x = center_x
+        window.center_y = center_y
+        window.center_radius = radius
+
+    def _register_test_click(self, window, event):
         """Register a click in the tester and update stats."""
         import time
         current_time = time.time()
         window.test_clicks += 1
         window.test_click_times.append(current_time)
+        
+        # Create a ripple that starts exactly on the center circle's edge
+        # The ripple starts with the same radius as the center circle, then expands
+        # Transparent (no fill) with white outline
+        circle_id = window.test_canvas.create_oval(
+            window.center_x - window.center_radius,
+            window.center_y - window.center_radius,
+            window.center_x + window.center_radius,
+            window.center_y + window.center_radius,
+            fill="", outline="white"
+        )
+        window.ripples.append((circle_id, window.center_x, window.center_y, current_time, window.center_radius))
+        
+        # Remove oldest ripples if we exceed the limit
+        while len(window.ripples) > window.max_ripples:
+            old_circle_id, _, _, _, _ = window.ripples.pop(0)
+            window.test_canvas.delete(old_circle_id)
 
         # Remove clicks older than 1 second for current speed calculation
         window.test_click_times = [t for t in window.test_click_times if current_time - t <= 1.0]
@@ -902,18 +1386,68 @@ class AutoClickerHub:
         current_cps = len(window.test_click_times)
         self.test_cps_var.set(f"Speed: {current_cps} clicks/sec")
 
-        # Update speed bar (scale: 0-20 clicks/sec for full bar)
-        max_cps = 20
-        progress = min(current_cps / max_cps, 1.0) * 100
-        self.test_speed_bar['value'] = progress
+        # Update speed display (no progress bar in new design)
+
+    def _animate_click_tester(self, window):
+        """Animate ripple effects - circles expand from center circle edge and fade out."""
+        if not window.winfo_exists():
+            return
+
+        import time
+        current_time = time.time()
+        ripple_duration = 0.3  # Ripple lasts 0.3 seconds (faster for better visibility at high speeds)
+        max_radius = 100  # Maximum radius for ripple (reduced from 150)
+        
+        # Update and remove old ripples
+        ripples_to_keep = []
+        for circle_id, center_x, center_y, creation_time, start_radius in window.ripples:
+            age = current_time - creation_time
+            if age >= ripple_duration:
+                window.test_canvas.delete(circle_id)
+            else:
+                ripples_to_keep.append((circle_id, center_x, center_y, creation_time, start_radius))
+                # Calculate progress (0.0 to 1.0)
+                progress = age / ripple_duration
+                
+                # Expand radius from center circle size to max
+                radius = start_radius + (max_radius - start_radius) * progress
+                
+                # Fade outline color (white to transparent/background)
+                bg_color = BG
+                bg_r = int(bg_color[1:3], 16)
+                bg_g = int(bg_color[3:5], 16)
+                bg_b = int(bg_color[5:7], 16)
+                
+                # Interpolate from white (255,255,255) to background
+                r = int(255 - (255 - bg_r) * progress)
+                g = int(255 - (255 - bg_g) * progress)
+                b = int(255 - (255 - bg_b) * progress)
+                
+                outline_color = f"#{r:02x}{g:02x}{b:02x}"
+                
+                # Update circle (transparent fill, colored outline)
+                window.test_canvas.coords(
+                    circle_id,
+                    center_x - radius, center_y - radius,
+                    center_x + radius, center_y + radius
+                )
+                window.test_canvas.itemconfig(circle_id, fill="", outline=outline_color)
+        
+        window.ripples = ripples_to_keep
+
+        # Schedule next animation frame (60 FPS for smooth ripple)
+        window.after(16, lambda: self._animate_click_tester(window))
 
     def _reset_click_tester(self, window):
         """Reset the click tester stats."""
         window.test_clicks = 0
         window.test_click_times = []
+        window.ripples = []
+        window.test_canvas.delete("all")  # Clear all circles
+        # Recreate center circle
+        self._create_center_circle(window)
         self.test_clicks_var.set("Clicks: 0")
         self.test_cps_var.set("Speed: 0 clicks/sec")
-        self.test_speed_bar['value'] = 0
 
     # ---------- Lifecycle ----------
     def on_close(self):
