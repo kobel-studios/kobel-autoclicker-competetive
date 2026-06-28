@@ -75,6 +75,10 @@ class AutoClickerHub:
         self.click_rate_history = deque(maxlen=60)  # Keep last 60 seconds of data
         self.start_time = None
         self.clicks_at_last_second = 0
+        # Track if click tester window is open (to avoid counting autoclicker clicks)
+        self.click_tester_open = False
+        # Track if user is actively clicking on the click tester circle
+        self.user_clicking_on_tester = False
 
         self._apply_dark_theme()
         self._load_config()
@@ -689,8 +693,10 @@ class AutoClickerHub:
         try:
             while not self.stop_flag.is_set():
                 pyautogui.click(button=button)
-                count += 1
-                self.total_clicks = count
+                # Don't count clicks if user is actively clicking on tester circle
+                if not self.user_clicking_on_tester:
+                    count += 1
+                    self.total_clicks = count
 
                 # Throttle UI updates so very fast clicking can't flood the GUI
                 # event queue (which could otherwise freeze the window).
@@ -1027,14 +1033,21 @@ class AutoClickerHub:
             new_sessions = [s for s in remote_sessions if s["timestamp"] not in local_timestamps]
 
             if new_sessions:
-                # Prompt user to update
-                result = messagebox.askyesno(
-                    "Leaderboard Update Available",
-                    f"Found {len(new_sessions)} new session(s) on the global leaderboard.\n\n"
-                    f"Do you want to download and merge them now?"
-                )
-                if result:
-                    self._update_leaderboard_from_github()
+                # If first-time user (no local data), auto-download without prompting
+                if not local_sessions:
+                    local_data["sessions"] = remote_sessions
+                    with open(DATA_FILE, "w", encoding="utf-8") as f:
+                        json.dump(local_data, f, indent=2)
+                    self._load_data()
+                else:
+                    # Prompt existing user to update
+                    result = messagebox.askyesno(
+                        "Leaderboard Update Available",
+                        f"Found {len(new_sessions)} new session(s) on the global leaderboard.\n\n"
+                        f"Do you want to download and merge them now?"
+                    )
+                    if result:
+                        self._update_leaderboard_from_github()
         except urllib.error.URLError:
             # Network error - silently skip on launch
             pass
@@ -1274,12 +1287,25 @@ Please merge this into the global leaderboard.
 
     def _show_click_tester(self):
         """Show a click tester popup for manual clicking speed testing."""
+        self.click_tester_open = True
         tester_window = tk.Toplevel(self.root)
         tester_window.title("Click Tester")
         tester_window.geometry("600x500")
         tester_window.configure(bg=BG)
         tester_window.attributes("-topmost", True)
         tester_window.resizable(True, True)  # Make window resizable
+        
+        # Reset flag when window closes or loses focus
+        def on_close():
+            self.click_tester_open = False
+            self.user_clicking_on_tester = False
+            tester_window.destroy()
+        
+        def on_focus_out(event):
+            self.user_clicking_on_tester = False
+        
+        tester_window.protocol("WM_DELETE_WINDOW", on_close)
+        tester_window.bind("<FocusOut>", on_focus_out)
 
         # Store original dimensions for scaling
         tester_window.original_width = 600
@@ -1290,7 +1316,7 @@ Please merge this into the global leaderboard.
         header_frame.pack(fill="x", padx=10, pady=10)
         ttk.Label(
             header_frame,
-            text="Click anywhere to test speed",
+            text="Click on the circle to test speed",
             font=("Segoe UI", 12, "bold"),
             foreground=FG,
             background=BG,
@@ -1399,6 +1425,19 @@ Please merge this into the global leaderboard.
     def _register_test_click(self, window, event):
         """Register a click in the tester and update stats."""
         import time
+        import math
+        
+        # Check if click is within the center circle
+        click_x, click_y = event.x, event.y
+        distance = math.sqrt((click_x - window.center_x)**2 + (click_y - window.center_y)**2)
+        
+        # Only count clicks within the center circle
+        if distance > window.center_radius:
+            return
+        
+        # Set flag that user is actively clicking on tester
+        self.user_clicking_on_tester = True
+        
         current_time = time.time()
         window.test_clicks += 1
         window.test_click_times.append(current_time)
