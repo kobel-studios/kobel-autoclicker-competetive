@@ -1060,7 +1060,15 @@ class AutoClickerHub:
         try:
             # Fetch data from GitHub
             response = urllib.request.urlopen(LEADERBOARD_GITHUB_URL)
-            remote_data = json.loads(response.read().decode('utf-8'))
+            api_response = json.loads(response.read().decode('utf-8'))
+            
+            # GitHub API returns base64-encoded content
+            if "content" in api_response:
+                import base64
+                content = base64.b64decode(api_response["content"]).decode('utf-8')
+                remote_data = json.loads(content)
+            else:
+                remote_data = {"sessions": []}
             remote_sessions = remote_data.get("sessions", [])
 
             # Load local data
