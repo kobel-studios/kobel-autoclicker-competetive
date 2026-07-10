@@ -554,8 +554,7 @@ class AutoClickerHub:
         if value < 0:
             var.set("0")
         elif value != int(value):
-            # Round to nearest whole number instead of resetting to 0
-            var.set(str(int(round(value))))
+            var.set("0")
 
     def _validate_millis(self, var):
         """Validate milliseconds field and reset to 0 if invalid."""
@@ -576,8 +575,7 @@ class AutoClickerHub:
         elif value < MIN_MILLIS:
             var.set("0")
         elif value != int(value):
-            # Round to nearest whole number instead of resetting to 0
-            var.set(str(int(round(value))))
+            var.set("0")
 
     def _clear_on_focus(self, var):
         # Only clear if the value is "0" so users can easily type a new number
